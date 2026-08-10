@@ -181,6 +181,18 @@ Missing, empty, corrupt, or protobuf-incompatible geodata fails the build with
 the missing category names before the release branch, main branch, or Pages
 artifact is updated.
 
+## iOS and `UseChunkFiles`
+
+Generated compatibility profiles set `UseChunkFiles` to `false`. Happ on iOS
+uses chunk mode to extract only the geodata categories explicitly present in
+the routing profile. Categories injected later by a subscription, including
+`geosite:yandex` and `geoip:ru`, are therefore absent from the extracted file
+even when the downloaded full database contains them.
+
+Full-file mode avoids that mismatch. The RoscomVPN-optimized compatibility
+files are small enough that this does not create the memory pressure which
+chunk mode is intended to prevent on iOS.
+
 ## Update behavior
 
 The Action runs hourly at minute 17 and can also be run manually.

@@ -256,6 +256,12 @@ def patched_profile(src: Path, repo: str) -> dict:
     if not name.endswith(suffix):
         obj["Name"] = name + suffix
 
+    # Happ on iOS extracts only categories explicitly named in the routing
+    # profile when chunk mode is enabled. Subscription-injected rules such as
+    # geosite:yandex and geoip:ru are not visible to that extractor, so their
+    # sections are omitted even though the downloaded full files contain them.
+    # Our optimized geodata is small, making full-file mode safe on iOS.
+    obj["UseChunkFiles"] = "false"
     obj["Geositeurl"] = geosite_cdn_url(repo)
     obj["Geoipurl"] = geoip_cdn_url(repo)
     return obj

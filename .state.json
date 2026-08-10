@@ -5,7 +5,7 @@
   "added_geoip_categories": [
     "ru"
   ],
-  "generated_at": "1786352141",
+  "generated_at": "1786354710",
   "geoip_sha256": "828a73a23b6823866eda02efed9d1c24c3375670e3dc1ae597796855757ec5be",
   "geoip_upstream_commit": "6bdc11af4f4c9f5305708c8662e60e240fc839a2",
   "geosite_sha256": "1291761070d654f52a72190f0be3edacb178a79841160d3d4deb48825296d58c",
