@@ -1,0 +1,14 @@
+{
+  "added_categories": [
+    "yandex"
+  ],
+  "generated_at": "1786347312",
+  "geosite_sha256": "1291761070d654f52a72190f0be3edacb178a79841160d3d4deb48825296d58c",
+  "geosite_upstream_commit": "8e77ecb1162be9bbc8355c2cd45dd6772f1a1627",
+  "routing_upstream_commit": "64161789ef8c02a8c52eb37263a4c9ce9e440e91",
+  "v2fly_files_added": [
+    "kinopoisk",
+    "yandex"
+  ],
+  "v2fly_upstream_commit": "383272bf0a263de550d65fed9b8520aab55dfcb4"
+}
