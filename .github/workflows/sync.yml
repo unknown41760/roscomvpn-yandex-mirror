@@ -1,0 +1,161 @@
+name: Sync RoscomVPN + Yandex compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sync.yml"
+      - "scripts/**"
+      - "README.md"
+  schedule:
+    # Hourly, away from :00 to reduce scheduler congestion.
+    - cron: "17 * * * *"
+
+concurrency:
+  group: roscomvpn-yandex-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+      geosite_sha256: ${{ steps.sync.outputs.geosite_sha256 }}
+      public_base_url: ${{ steps.sync.outputs.public_base_url }}
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Clone upstream repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf \
+            "$RUNNER_TEMP/roscomvpn-routing" \
+            "$RUNNER_TEMP/roscomvpn-geosite" \
+            "$RUNNER_TEMP/v2fly"
+
+          git clone --depth 1 \
+            https://github.com/hydraponique/roscomvpn-routing.git \
+            "$RUNNER_TEMP/roscomvpn-routing"
+
+          git clone --depth 1 \
+            https://github.com/hydraponique/roscomvpn-geosite.git \
+            "$RUNNER_TEMP/roscomvpn-geosite"
+
+          git clone --depth 1 \
+            https://github.com/v2fly/domain-list-community.git \
+            "$RUNNER_TEMP/v2fly"
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ runner.temp }}/v2fly/go.mod
+          cache: true
+          cache-dependency-path: ${{ runner.temp }}/v2fly/go.sum
+
+      - name: Build routing profiles, geosite and installer site
+        id: sync
+        env:
+          ROUTING_SRC: ${{ runner.temp }}/roscomvpn-routing
+          GEOSITE_SRC: ${{ runner.temp }}/roscomvpn-geosite
+          V2FLY_SRC: ${{ runner.temp }}/v2fly
+          WORK_DIR: ${{ runner.temp }}/roscomvpn-yandex-build
+
+          # Optional repository variable. Leave empty to use the standard
+          # https://OWNER.github.io/REPO/ Pages URL.
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: python3 scripts/sync.py
+
+      - name: Publish geosite.dat to release branch
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN_FOR_PUSH: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_DIR="$RUNNER_TEMP/roscomvpn-release"
+          rm -rf "$RELEASE_DIR"
+          mkdir -p "$RELEASE_DIR"
+
+          cp .build/geosite.dat "$RELEASE_DIR/geosite.dat"
+
+          (
+            cd "$RELEASE_DIR"
+            sha256sum geosite.dat > geosite.dat.sha256
+
+            git init
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout -b release
+
+            git add geosite.dat geosite.dat.sha256
+            git commit -m "Augmented geosite ${{ steps.sync.outputs.geosite_sha256 }}"
+
+            git remote add origin \
+              "https://x-access-token:${GH_TOKEN_FOR_PUSH}@github.com/${GITHUB_REPOSITORY}.git"
+            git push --force origin release
+          )
+
+      - name: Purge jsDelivr cache
+        if: steps.sync.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@release/geosite.dat" \
+            >/dev/null || true
+
+      - name: Commit generated profiles
+        if: steps.sync.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add HAPP .state.json
+
+          if git diff --cached --quiet; then
+            echo "No main-branch changes."
+            exit 0
+          fi
+
+          git commit -m "Sync RoscomVPN routing and Yandex geosite"
+          git push
+
+      # Upload the freshly generated stable installer site from THIS run.
+      # We do this in the same workflow because pushes made with GITHUB_TOKEN
+      # do not reliably start another workflow.
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: .site
+
+  deploy-pages:
+    needs: sync
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy stable Happ installer
+        id: deployment
+        uses: actions/deploy-pages@v4
