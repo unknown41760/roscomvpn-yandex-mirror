@@ -17,6 +17,8 @@ ROOT = Path(os.environ["GITHUB_WORKSPACE"])
 ROUTING_SRC = Path(os.environ["ROUTING_SRC"])
 GEOSITE_SRC = Path(os.environ["GEOSITE_SRC"])
 V2FLY_SRC = Path(os.environ["V2FLY_SRC"])
+GEOIP_SRC = Path(os.environ["GEOIP_SRC"])
+V2FLY_GEOIP_SRC = Path(os.environ["V2FLY_GEOIP_SRC"])
 WORK_DIR = Path(os.environ["WORK_DIR"])
 
 HAPP_OUT = ROOT / "HAPP"
@@ -26,6 +28,9 @@ STATE_FILE = ROOT / ".state.json"
 
 # Fixes subscriptions that inject `geosite:yandex`.
 EXTRA_CATEGORIES = ["yandex"]
+# Fixes subscriptions that inject `geoip:ru` while retaining every category
+# and CIDR from RoscomVPN's custom GeoIP database.
+EXTRA_GEOIP_CATEGORIES = ["ru"]
 
 
 def sha256_file(path: Path) -> str:
@@ -158,6 +163,65 @@ def build_augmented_geosite() -> tuple[Path, set[str]]:
     return final, copied
 
 
+def run_geodata_tool(*args: str, capture_output: bool = False) -> str:
+    command = [
+        "go",
+        "run",
+        str(ROOT / "scripts" / "geodata_tool.go"),
+        *args,
+    ]
+    result = subprocess.run(
+        command,
+        cwd=V2FLY_SRC,
+        check=False,
+        text=True,
+        capture_output=capture_output,
+    )
+    if result.returncode != 0:
+        diagnostic = "\n".join(
+            part.strip()
+            for part in (result.stdout, result.stderr)
+            if part and part.strip()
+        )
+        raise RuntimeError(
+            f"geodata validation tool failed ({' '.join(args)}):\n{diagnostic}"
+        )
+    return result.stdout if capture_output else ""
+
+
+def build_augmented_geoip() -> Path:
+    base = GEOIP_SRC / "geoip.dat"
+    source = V2FLY_GEOIP_SRC / "geoip.dat"
+    for label, path in (("RoscomVPN", base), ("V2Fly", source)):
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(f"{label} GeoIP release is missing {path}")
+
+    BUILD_OUT.mkdir(parents=True, exist_ok=True)
+    final = BUILD_OUT / "geoip.dat"
+
+    # Currently there is one compatibility category. Invoking the merge tool
+    # per category keeps this incremental if more are needed in the future.
+    current_base = base
+    for index, category in enumerate(EXTRA_GEOIP_CATEGORIES):
+        output = (
+            final
+            if index == len(EXTRA_GEOIP_CATEGORIES) - 1
+            else BUILD_OUT / f"geoip.merge-{index}.dat"
+        )
+        run_geodata_tool(
+            "merge-geoip",
+            "--base", str(current_base),
+            "--source", str(source),
+            "--output", str(output),
+            "--category", category,
+        )
+        current_base = output
+
+    if not final.is_file() or final.stat().st_size == 0:
+        raise RuntimeError("GeoIP merge did not produce geoip.dat")
+    return final
+
+
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -178,17 +242,79 @@ def geosite_cdn_url(repo: str) -> str:
     return f"https://cdn.jsdelivr.net/gh/{repo}@release/geosite.dat"
 
 
+def geoip_cdn_url(repo: str) -> str:
+    return f"https://cdn.jsdelivr.net/gh/{repo}@release/geoip.dat"
+
+
 def patched_profile(src: Path, repo: str) -> dict:
     obj = load_json(src)
 
-    # Distinct name prevents accidental collision with the original profile.
+    # Keep the established suffix so existing compatibility profiles update in
+    # place instead of creating a second profile when GeoIP support is added.
     name = str(obj.get("Name", src.stem))
     suffix = " + Yandex"
     if not name.endswith(suffix):
         obj["Name"] = name + suffix
 
     obj["Geositeurl"] = geosite_cdn_url(repo)
+    obj["Geoipurl"] = geoip_cdn_url(repo)
     return obj
+
+
+def walk_strings(value: object):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from walk_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_strings(child)
+
+
+def referenced_categories(profiles: dict[str, dict]) -> tuple[set[str], set[str]]:
+    geosite = {category.upper() for category in EXTRA_CATEGORIES}
+    geoip = {category.upper() for category in EXTRA_GEOIP_CATEGORIES}
+
+    pattern = re.compile(r"^(geosite|geoip):(!?[^@\s]+)", re.IGNORECASE)
+    for profile in profiles.values():
+        for value in walk_strings(profile):
+            match = pattern.match(value.strip())
+            if not match:
+                continue
+            kind, category = match.groups()
+            category = category.lstrip("!").upper()
+            if kind.lower() == "geosite":
+                geosite.add(category)
+            else:
+                geoip.add(category)
+
+    return geosite, geoip
+
+
+def validate_geodata(
+    geosite_file: Path,
+    geoip_file: Path,
+    required_geosite: set[str],
+    required_geoip: set[str],
+) -> dict:
+    args = [
+        "validate",
+        "--geosite", str(geosite_file),
+        "--geoip", str(geoip_file),
+    ]
+    for category in sorted(required_geosite):
+        args.extend(("--geosite-category", category))
+    for category in sorted(required_geoip):
+        args.extend(("--geoip-category", category))
+
+    output = run_geodata_tool(*args, capture_output=True)
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"geodata validation returned invalid JSON: {output!r}"
+        ) from exc
 
 
 def make_deeplink(obj: dict) -> str:
@@ -303,7 +429,7 @@ def index_html(profiles: list[dict], manifest_url: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>RoscomVPN + Yandex Happ routing</title>
+  <title>RoscomVPN compatible Happ routing</title>
   <style>
     body {{
       font-family: system-ui, sans-serif;
@@ -317,10 +443,10 @@ def index_html(profiles: list[dict], manifest_url: str) -> str:
   </style>
 </head>
 <body>
-  <h1>RoscomVPN + Yandex compatibility</h1>
+  <h1>RoscomVPN geodata compatibility</h1>
   <p>
-    Latest RoscomVPN Happ routing profiles with a geosite database that also
-    contains the <code>yandex</code> category.
+    Latest RoscomVPN Happ routing profiles with compatible geodata containing
+    <code>geosite:yandex</code> and <code>geoip:ru</code>.
   </p>
 
   <ul>
@@ -341,6 +467,8 @@ def build_site(
     base_url: str,
     geosite_file: Path,
     geosite_sha: str,
+    geoip_file: Path,
+    geoip_sha: str,
     state: dict,
 ) -> None:
     if SITE_OUT.exists():
@@ -352,6 +480,11 @@ def build_site(
     shutil.copy2(geosite_file, SITE_OUT / "geosite.dat")
     (SITE_OUT / "geosite.dat.sha256").write_text(
         f"{geosite_sha}  geosite.dat\n",
+        encoding="utf-8",
+    )
+    shutil.copy2(geoip_file, SITE_OUT / "geoip.dat")
+    (SITE_OUT / "geoip.dat.sha256").write_text(
+        f"{geoip_sha}  geoip.dat\n",
         encoding="utf-8",
     )
 
@@ -419,12 +552,24 @@ def build_site(
             "pages_url": f"{base_url}geosite.dat",
             "cdn_url": geosite_cdn_url(repo),
         },
+        "geoip": {
+            "sha256": geoip_sha,
+            "pages_url": f"{base_url}geoip.dat",
+            "cdn_url": geoip_cdn_url(repo),
+        },
         "upstream": {
             "routing_commit": state.get("routing_upstream_commit"),
             "geosite_commit": state.get("geosite_upstream_commit"),
             "v2fly_commit": state.get("v2fly_upstream_commit"),
+            "geoip_commit": state.get("geoip_upstream_commit"),
+            "v2fly_geoip_commit": state.get("v2fly_geoip_upstream_commit"),
         },
         "added_categories": state.get("added_categories", EXTRA_CATEGORIES),
+        "added_geoip_categories": state.get(
+            "added_geoip_categories",
+            EXTRA_GEOIP_CATEGORIES,
+        ),
+        "validated_categories": state.get("validated_categories", {}),
         "profiles": profiles_meta,
     }
 
@@ -448,6 +593,8 @@ def main() -> None:
 
     geosite_file, extra_files = build_augmented_geosite()
     geosite_sha = sha256_file(geosite_file)
+    geoip_file = build_augmented_geoip()
+    geoip_sha = sha256_file(geoip_file)
 
     source_jsons = sorted((ROUTING_SRC / "HAPP").glob("*.JSON"))
     if not source_jsons:
@@ -458,6 +605,22 @@ def main() -> None:
         for src in source_jsons
     }
 
+    required_geosite, required_geoip = referenced_categories(desired)
+    validate_geodata(
+        geosite_file,
+        geoip_file,
+        required_geosite,
+        required_geoip,
+    )
+    print(
+        "Validated geosite categories:",
+        ", ".join(sorted(required_geosite)),
+    )
+    print(
+        "Validated GeoIP categories:",
+        ", ".join(sorted(required_geoip)),
+    )
+
     old_state: dict = {}
     if STATE_FILE.exists():
         try:
@@ -466,6 +629,7 @@ def main() -> None:
             old_state = {}
 
     old_geosite_sha = old_state.get("geosite_sha256")
+    old_geoip_sha = old_state.get("geoip_sha256")
 
     existing_json_names = (
         {p.name for p in HAPP_OUT.glob("*.JSON")}
@@ -495,7 +659,9 @@ def main() -> None:
                 break
 
     geosite_changed = geosite_sha != old_geosite_sha
-    changed = configs_changed or geosite_changed
+    geoip_changed = geoip_sha != old_geoip_sha
+    geodata_changed = geosite_changed or geoip_changed
+    changed = configs_changed or geodata_changed
 
     now = str(int(time.time()))
 
@@ -513,9 +679,17 @@ def main() -> None:
             "routing_upstream_commit": git_head(ROUTING_SRC),
             "geosite_upstream_commit": git_head(GEOSITE_SRC),
             "v2fly_upstream_commit": git_head(V2FLY_SRC),
+            "geoip_upstream_commit": git_head(GEOIP_SRC),
+            "v2fly_geoip_upstream_commit": git_head(V2FLY_GEOIP_SRC),
             "geosite_sha256": geosite_sha,
+            "geoip_sha256": geoip_sha,
             "added_categories": EXTRA_CATEGORIES,
+            "added_geoip_categories": EXTRA_GEOIP_CATEGORIES,
             "v2fly_files_added": sorted(extra_files),
+            "validated_categories": {
+                "geosite": sorted(required_geosite),
+                "geoip": sorted(required_geoip),
+            },
         }
 
         STATE_FILE.write_text(
@@ -525,9 +699,10 @@ def main() -> None:
 
         print(f"Generated {len(desired)} Happ profiles.")
         print(f"Augmented geosite SHA-256: {geosite_sha}")
+        print(f"Augmented GeoIP SHA-256: {geoip_sha}")
         print("Added V2Fly files:", ", ".join(sorted(extra_files)))
     else:
-        print("No material routing/geosite changes detected.")
+        print("No material routing/geodata changes detected.")
         state = old_state
 
         # First-time safety if generated files were manually omitted.
@@ -543,11 +718,17 @@ def main() -> None:
         base_url=base_url,
         geosite_file=geosite_file,
         geosite_sha=geosite_sha,
+        geoip_file=geoip_file,
+        geoip_sha=geoip_sha,
         state=state,
     )
 
     emit_output("changed", "true" if changed else "false")
+    emit_output("geodata_changed", "true" if geodata_changed else "false")
+    emit_output("geosite_changed", "true" if geosite_changed else "false")
+    emit_output("geoip_changed", "true" if geoip_changed else "false")
     emit_output("geosite_sha256", geosite_sha)
+    emit_output("geoip_sha256", geoip_sha)
     emit_output("public_base_url", base_url)
 
     print(f"Permanent installer base: {base_url}")

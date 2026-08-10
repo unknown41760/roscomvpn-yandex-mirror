@@ -1,4 +1,4 @@
-name: Sync RoscomVPN + Yandex compatibility
+name: Sync RoscomVPN geodata compatibility
 
 on:
   workflow_dispatch:
@@ -24,7 +24,9 @@ jobs:
 
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
+      geodata_changed: ${{ steps.sync.outputs.geodata_changed }}
       geosite_sha256: ${{ steps.sync.outputs.geosite_sha256 }}
+      geoip_sha256: ${{ steps.sync.outputs.geoip_sha256 }}
       public_base_url: ${{ steps.sync.outputs.public_base_url }}
 
     steps:
@@ -41,7 +43,9 @@ jobs:
           rm -rf \
             "$RUNNER_TEMP/roscomvpn-routing" \
             "$RUNNER_TEMP/roscomvpn-geosite" \
-            "$RUNNER_TEMP/v2fly"
+            "$RUNNER_TEMP/roscomvpn-geoip" \
+            "$RUNNER_TEMP/v2fly" \
+            "$RUNNER_TEMP/v2fly-geoip"
 
           git clone --depth 1 \
             https://github.com/hydraponique/roscomvpn-routing.git \
@@ -54,6 +58,15 @@ jobs:
           git clone --depth 1 \
             https://github.com/v2fly/domain-list-community.git \
             "$RUNNER_TEMP/v2fly"
+
+          # These release branches contain the exact binaries consumed below.
+          git clone --depth 1 --branch release --single-branch \
+            https://github.com/hydraponique/roscomvpn-geoip.git \
+            "$RUNNER_TEMP/roscomvpn-geoip"
+
+          git clone --depth 1 --branch release --single-branch \
+            https://github.com/v2fly/geoip.git \
+            "$RUNNER_TEMP/v2fly-geoip"
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -68,6 +81,8 @@ jobs:
           ROUTING_SRC: ${{ runner.temp }}/roscomvpn-routing
           GEOSITE_SRC: ${{ runner.temp }}/roscomvpn-geosite
           V2FLY_SRC: ${{ runner.temp }}/v2fly
+          GEOIP_SRC: ${{ runner.temp }}/roscomvpn-geoip
+          V2FLY_GEOIP_SRC: ${{ runner.temp }}/v2fly-geoip
           WORK_DIR: ${{ runner.temp }}/roscomvpn-yandex-build
 
           # Optional repository variable. Leave empty to use the standard
@@ -75,8 +90,46 @@ jobs:
           PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
         run: python3 scripts/sync.py
 
-      - name: Publish geosite.dat to release branch
-        if: steps.sync.outputs.changed == 'true'
+      - name: Check release branch contents
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CHECK_DIR="$(mktemp -d "$RUNNER_TEMP/roscomvpn-release-check.XXXXXX")"
+          trap 'rm -rf "$CHECK_DIR"' EXIT
+          publish=true
+
+          if git fetch --no-tags --depth 1 origin refs/heads/release; then
+            cp .build/geosite.dat "$CHECK_DIR/geosite.dat"
+            cp .build/geoip.dat "$CHECK_DIR/geoip.dat"
+            (
+              cd "$CHECK_DIR"
+              sha256sum geosite.dat > geosite.dat.sha256
+              sha256sum geoip.dat > geoip.dat.sha256
+            )
+
+            remote_complete=true
+            for file in geosite.dat geosite.dat.sha256 geoip.dat geoip.dat.sha256; do
+              if ! git show "FETCH_HEAD:$file" > "$CHECK_DIR/remote-$file"; then
+                remote_complete=false
+                break
+              fi
+            done
+
+            if [[ "$remote_complete" == true ]] \
+              && cmp -s "$CHECK_DIR/geosite.dat" "$CHECK_DIR/remote-geosite.dat" \
+              && cmp -s "$CHECK_DIR/geosite.dat.sha256" "$CHECK_DIR/remote-geosite.dat.sha256" \
+              && cmp -s "$CHECK_DIR/geoip.dat" "$CHECK_DIR/remote-geoip.dat" \
+              && cmp -s "$CHECK_DIR/geoip.dat.sha256" "$CHECK_DIR/remote-geoip.dat.sha256"; then
+              publish=false
+            fi
+          fi
+
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Publish geodata to release branch
+        if: steps.release.outputs.publish == 'true'
         env:
           GH_TOKEN_FOR_PUSH: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -88,18 +141,20 @@ jobs:
           mkdir -p "$RELEASE_DIR"
 
           cp .build/geosite.dat "$RELEASE_DIR/geosite.dat"
+          cp .build/geoip.dat "$RELEASE_DIR/geoip.dat"
 
           (
             cd "$RELEASE_DIR"
             sha256sum geosite.dat > geosite.dat.sha256
+            sha256sum geoip.dat > geoip.dat.sha256
 
             git init
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git checkout -b release
 
-            git add geosite.dat geosite.dat.sha256
-            git commit -m "Augmented geosite ${{ steps.sync.outputs.geosite_sha256 }}"
+            git add geosite.dat geosite.dat.sha256 geoip.dat geoip.dat.sha256
+            git commit -m "Compatible geodata ${{ steps.sync.outputs.geosite_sha256 }} ${{ steps.sync.outputs.geoip_sha256 }}"
 
             git remote add origin \
               "https://x-access-token:${GH_TOKEN_FOR_PUSH}@github.com/${GITHUB_REPOSITORY}.git"
@@ -107,12 +162,21 @@ jobs:
           )
 
       - name: Purge jsDelivr cache
-        if: steps.sync.outputs.changed == 'true'
+        if: steps.release.outputs.publish == 'true'
         shell: bash
         run: |
           set -euo pipefail
           curl -fsSL \
             "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@release/geosite.dat" \
+            >/dev/null || true
+          curl -fsSL \
+            "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@release/geosite.dat.sha256" \
+            >/dev/null || true
+          curl -fsSL \
+            "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@release/geoip.dat" \
+            >/dev/null || true
+          curl -fsSL \
+            "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@release/geoip.dat.sha256" \
             >/dev/null || true
 
       - name: Commit generated profiles
@@ -131,7 +195,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Sync RoscomVPN routing and Yandex geosite"
+          git commit -m "Sync RoscomVPN routing and compatible geodata"
           git push
 
       # Upload the freshly generated stable installer site from THIS run.
