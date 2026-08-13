@@ -5,12 +5,12 @@
   "added_geoip_categories": [
     "ru"
   ],
-  "generated_at": "1786517076",
-  "geoip_sha256": "4c80db0ff6120a3c427bc279767eac5e21e310c615813e871eb3a05803f10b66",
-  "geoip_upstream_commit": "8747bdd8ed24e0d68ba79e7570e53d06c6d7e54d",
+  "generated_at": "1786597752",
+  "geoip_sha256": "3f2932453ccc481d9ccf630407cc876174ea2bccef671d22a833298abafc519c",
+  "geoip_upstream_commit": "e3b957985c9f823314c11c0f6d586ef401fa62a1",
   "geosite_sha256": "199c024538abaede027c5b8f1077b42ddb18c267f856c97f50c48cdbc8b1b49c",
   "geosite_upstream_commit": "8e77ecb1162be9bbc8355c2cd45dd6772f1a1627",
-  "routing_upstream_commit": "b6d45efc16374f83d97652fb37a05c9a19ac545f",
+  "routing_upstream_commit": "7928865d576a11b5642aa7c928068d010bb736b8",
   "v2fly_files_added": [
     "kinopoisk",
     "yandex"
