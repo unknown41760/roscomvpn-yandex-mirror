@@ -5,18 +5,18 @@
   "added_geoip_categories": [
     "ru"
   ],
-  "generated_at": "1786354710",
-  "geoip_sha256": "828a73a23b6823866eda02efed9d1c24c3375670e3dc1ae597796855757ec5be",
-  "geoip_upstream_commit": "6bdc11af4f4c9f5305708c8662e60e240fc839a2",
-  "geosite_sha256": "1291761070d654f52a72190f0be3edacb178a79841160d3d4deb48825296d58c",
+  "generated_at": "1786597752",
+  "geoip_sha256": "3f2932453ccc481d9ccf630407cc876174ea2bccef671d22a833298abafc519c",
+  "geoip_upstream_commit": "e3b957985c9f823314c11c0f6d586ef401fa62a1",
+  "geosite_sha256": "199c024538abaede027c5b8f1077b42ddb18c267f856c97f50c48cdbc8b1b49c",
   "geosite_upstream_commit": "8e77ecb1162be9bbc8355c2cd45dd6772f1a1627",
-  "routing_upstream_commit": "64161789ef8c02a8c52eb37263a4c9ce9e440e91",
+  "routing_upstream_commit": "7928865d576a11b5642aa7c928068d010bb736b8",
   "v2fly_files_added": [
     "kinopoisk",
     "yandex"
   ],
   "v2fly_geoip_upstream_commit": "49618b228d93b8030999b337f2e727bd12992702",
-  "v2fly_upstream_commit": "383272bf0a263de550d65fed9b8520aab55dfcb4",
+  "v2fly_upstream_commit": "be33634fee958b9bafd8dfeba54f47a0626f7fa6",
   "validated_categories": {
     "geoip": [
       "DIRECT",
