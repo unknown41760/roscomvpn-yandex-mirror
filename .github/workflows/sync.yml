@@ -9,8 +9,9 @@ on:
       - "scripts/**"
       - "README.md"
   schedule:
-    # Hourly, away from :00 to reduce scheduler congestion.
-    - cron: "17 * * * *"
+    # Twice weekly (Monday and Thursday), away from :00 to reduce scheduler
+    # congestion. This keeps updates at most 3-4 days behind upstream.
+    - cron: "17 3 * * 1,4"
 
 concurrency:
   group: roscomvpn-yandex-sync
@@ -28,6 +29,7 @@ jobs:
       geosite_sha256: ${{ steps.sync.outputs.geosite_sha256 }}
       geoip_sha256: ${{ steps.sync.outputs.geoip_sha256 }}
       public_base_url: ${{ steps.sync.outputs.public_base_url }}
+      deploy_pages: ${{ steps.pages.outputs.publish }}
 
     steps:
       - name: Checkout this repository
@@ -198,16 +200,33 @@ jobs:
           git commit -m "Sync RoscomVPN routing and compatible geodata"
           git push
 
-      # Upload the freshly generated stable installer site from THIS run.
-      # We do this in the same workflow because pushes made with GITHUB_TOKEN
-      # do not reliably start another workflow.
+      - name: Decide whether to deploy Pages
+        id: pages
+        env:
+          GENERATED_CHANGED: ${{ steps.sync.outputs.changed }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish=false
+          if [[ "$GENERATED_CHANGED" == "true" || "$EVENT_NAME" != "schedule" ]]; then
+            publish=true
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      # Scheduled no-change checks do not upload or redeploy an identical site.
+      # Manual and source-code-triggered runs still deploy, which supports
+      # first-time setup and explicit recovery of a missing Pages deployment.
       - name: Upload GitHub Pages artifact
+        if: steps.pages.outputs.publish == 'true'
         uses: actions/upload-pages-artifact@v4
         with:
           path: .site
 
   deploy-pages:
     needs: sync
+    if: needs.sync.outputs.deploy_pages == 'true'
     runs-on: ubuntu-latest
 
     permissions:

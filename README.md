@@ -195,7 +195,10 @@ chunk mode is intended to prevent on iOS.
 
 ## Update behavior
 
-The Action runs hourly at minute 17 and can also be run manually.
+The Action runs every Monday and Thursday at 03:17 UTC and can also be run
+manually. This limits automatic checks to roughly every 3–4 days. External
+upstream repositories cannot directly trigger this workflow, so a scheduled
+poll is still required to discover their changes.
 
 It:
 
@@ -205,7 +208,9 @@ It:
 4. compares both resulting SHA-256 hashes and profile content;
 5. updates `release` only when geodata changes and `main` only when any
    material generated content changes;
-6. rebuilds and deploys the permanent installer site on every successful run.
+6. deploys the permanent installer site only when generated content changes.
+   Manual runs and pushes that modify this workflow, its scripts, or README
+   also deploy Pages to support initial setup and recovery.
 
 Happ may impose its own geo-file refresh interval. Re-importing/updating the
 same named routing profile gives Happ the current `LastUpdated` value and URLs.
