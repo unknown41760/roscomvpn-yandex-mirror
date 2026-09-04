@@ -36,9 +36,24 @@ Generated Happ profiles:
 - `HAPP/WHITELIST.DEEPLINK`
 - `HAPP/JSONSUB.JSON`
 - `HAPP/JSONSUB.DEEPLINK`
+- `HAPP/ARCHI-TILE.JSON`
+- `HAPP/ARCHI-TILE.DEEPLINK`
 
-The exact upstream profile set is mirrored, so files can appear/disappear as
-RoscomVPN changes.
+The exact upstream profile set is mirrored, so upstream files can
+appear/disappear as RoscomVPN changes. Additional profiles are derived from
+those current upstream profiles using `config/profile-overlays.json`.
+
+`ARCHI-TILE` follows the latest upstream `DEFAULT` profile and additionally
+routes the following destination directly rather than through the proxy:
+
+```text
+domain:archi-tile.ru
+185.187.114.190/32
+```
+
+The `domain:` rule covers both the root domain and its subdomains. The `/32`
+rule covers only that exact IP address; update the overlay if the site's
+hosting address changes.
 
 ### Release branch
 
@@ -67,6 +82,7 @@ https://OWNER.github.io/REPO/
 https://OWNER.github.io/REPO/install/default/
 https://OWNER.github.io/REPO/install/whitelist/
 https://OWNER.github.io/REPO/install/jsonsub/
+https://OWNER.github.io/REPO/install/archi-tile/
 ```
 
 The `install/default/` URL stays the same. The page is regenerated with the
@@ -78,8 +94,12 @@ Machine-readable endpoints are also published:
 https://OWNER.github.io/REPO/latest.json
 https://OWNER.github.io/REPO/routing/default.json
 https://OWNER.github.io/REPO/routing/default.txt
+https://OWNER.github.io/REPO/routing/archi-tile.json
+https://OWNER.github.io/REPO/routing/archi-tile.txt
 https://OWNER.github.io/REPO/panel/default-routing-header.txt
 https://OWNER.github.io/REPO/panel/default-subscription-body.txt
+https://OWNER.github.io/REPO/panel/archi-tile-routing-header.txt
+https://OWNER.github.io/REPO/panel/archi-tile-subscription-body.txt
 https://OWNER.github.io/REPO/geosite.dat
 https://OWNER.github.io/REPO/geosite.dat.sha256
 https://OWNER.github.io/REPO/geoip.dat

@@ -25,6 +25,7 @@ HAPP_OUT = ROOT / "HAPP"
 BUILD_OUT = ROOT / ".build"
 SITE_OUT = ROOT / ".site"
 STATE_FILE = ROOT / ".state.json"
+PROFILE_OVERLAYS_FILE = ROOT / "config" / "profile-overlays.json"
 
 # Fixes subscriptions that inject `geosite:yandex`.
 EXTRA_CATEGORIES = ["yandex"]
@@ -265,6 +266,102 @@ def patched_profile(src: Path, repo: str) -> dict:
     obj["Geositeurl"] = geosite_cdn_url(repo)
     obj["Geoipurl"] = geoip_cdn_url(repo)
     return obj
+
+
+def safe_profile_filename(value: object, field: str) -> str:
+    filename = str(value).strip()
+    if (
+        not filename
+        or Path(filename).name != filename
+        or Path(filename).suffix.upper() != ".JSON"
+    ):
+        raise RuntimeError(
+            f"Profile overlay {field} must be a plain .JSON filename: "
+            f"{filename!r}"
+        )
+    return filename
+
+
+def apply_profile_overlays(
+    upstream_profiles: dict[str, dict],
+) -> tuple[dict[str, dict], list[dict]]:
+    if not PROFILE_OVERLAYS_FILE.exists():
+        return {}, []
+
+    document = load_json(PROFILE_OVERLAYS_FILE)
+    if not isinstance(document, dict):
+        raise RuntimeError(f"{PROFILE_OVERLAYS_FILE} must contain an object")
+    overlays = document.get("profiles")
+    if not isinstance(overlays, list):
+        raise RuntimeError(
+            f"{PROFILE_OVERLAYS_FILE} must contain a profiles array"
+        )
+
+    generated: dict[str, dict] = {}
+    metadata: list[dict] = []
+
+    for index, overlay in enumerate(overlays):
+        label = f"profile overlay #{index + 1}"
+        if not isinstance(overlay, dict):
+            raise RuntimeError(f"{label} must be an object")
+
+        source = safe_profile_filename(overlay.get("source"), "source")
+        output = safe_profile_filename(overlay.get("output"), "output")
+
+        if source not in upstream_profiles:
+            raise RuntimeError(
+                f"{label} references unavailable upstream profile {source}"
+            )
+        if output in upstream_profiles or output in generated:
+            raise RuntimeError(
+                f"{label} output collides with another profile: {output}"
+            )
+
+        profile = json.loads(json.dumps(upstream_profiles[source]))
+
+        name = overlay.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise RuntimeError(f"{label} must have a non-empty name")
+        profile["Name"] = name.strip()
+
+        append = overlay.get("append", {})
+        if not isinstance(append, dict):
+            raise RuntimeError(f"{label} append must be an object")
+
+        appended: dict[str, list[str]] = {}
+        for field, values in append.items():
+            if field not in profile or not isinstance(profile[field], list):
+                raise RuntimeError(
+                    f"{label} cannot append to non-list profile field {field!r}"
+                )
+            if (
+                not isinstance(values, list)
+                or not values
+                or not all(
+                    isinstance(value, str) and value.strip()
+                    for value in values
+                )
+            ):
+                raise RuntimeError(
+                    f"{label} append field {field!r} must be a non-empty "
+                    "array of strings"
+                )
+
+            normalized = [value.strip() for value in values]
+            for value in normalized:
+                if value not in profile[field]:
+                    profile[field].append(value)
+            appended[field] = normalized
+
+        generated[output] = profile
+        metadata.append({
+            "source": source,
+            "output": output,
+            "name": profile["Name"],
+            "append": appended,
+        })
+
+    return generated, metadata
 
 
 def walk_strings(value: object):
@@ -576,6 +673,7 @@ def build_site(
             EXTRA_GEOIP_CATEGORIES,
         ),
         "validated_categories": state.get("validated_categories", {}),
+        "profile_overlays": state.get("profile_overlays", []),
         "profiles": profiles_meta,
     }
 
@@ -606,10 +704,14 @@ def main() -> None:
     if not source_jsons:
         raise RuntimeError("No HAPP/*.JSON profiles found upstream")
 
-    desired: dict[str, dict] = {
+    upstream_profiles: dict[str, dict] = {
         src.name: patched_profile(src, repo)
         for src in source_jsons
     }
+    overlay_profiles, overlay_metadata = apply_profile_overlays(
+        upstream_profiles
+    )
+    desired = {**upstream_profiles, **overlay_profiles}
 
     required_geosite, required_geoip = referenced_categories(desired)
     validate_geodata(
@@ -696,6 +798,7 @@ def main() -> None:
                 "geosite": sorted(required_geosite),
                 "geoip": sorted(required_geoip),
             },
+            "profile_overlays": overlay_metadata,
         }
 
         STATE_FILE.write_text(

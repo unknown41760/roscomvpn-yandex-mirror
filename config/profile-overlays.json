@@ -1,0 +1,17 @@
+{
+  "profiles": [
+    {
+      "source": "DEFAULT.JSON",
+      "output": "ARCHI-TILE.JSON",
+      "name": "RoscomVPN + Yandex + Archi Tile Direct",
+      "append": {
+        "DirectSites": [
+          "domain:archi-tile.ru"
+        ],
+        "DirectIp": [
+          "185.187.114.190/32"
+        ]
+      }
+    }
+  ]
+}

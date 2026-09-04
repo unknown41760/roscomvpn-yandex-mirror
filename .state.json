@@ -10,6 +10,21 @@
   "geoip_upstream_commit": "c2c32b582e943c3f199eab6b13b2dd78742c8810",
   "geosite_sha256": "199c024538abaede027c5b8f1077b42ddb18c267f856c97f50c48cdbc8b1b49c",
   "geosite_upstream_commit": "8e77ecb1162be9bbc8355c2cd45dd6772f1a1627",
+  "profile_overlays": [
+    {
+      "append": {
+        "DirectIp": [
+          "185.187.114.190/32"
+        ],
+        "DirectSites": [
+          "domain:archi-tile.ru"
+        ]
+      },
+      "name": "RoscomVPN + Yandex + Archi Tile Direct",
+      "output": "ARCHI-TILE.JSON",
+      "source": "DEFAULT.JSON"
+    }
+  ],
   "routing_upstream_commit": "99cf736e0f829ab2d7124a2b3511291009bb6b3a",
   "v2fly_files_added": [
     "kinopoisk",
